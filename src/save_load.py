@@ -211,7 +211,7 @@ def save_history(file, history):
         history: history that will be saved.
 
     Returns:
-
+        fold_h: a numpy Array containing the history of a single fold.
     """
     loss = history['loss']
     acc = history['acc']
