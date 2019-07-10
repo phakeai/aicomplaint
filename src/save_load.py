@@ -247,7 +247,7 @@ def load_model(json_path, weights_path):
         weights_path: path to the file containing the weights of an individual training fold.
 
     Returns:
-
+        model: model object
     """
     json_file = open(json_path, 'r')
     model_json = json_file.read()
