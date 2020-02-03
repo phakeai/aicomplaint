@@ -57,12 +57,12 @@ def train_eval(params, embedding_matrix, folds, output_path):
         m = model.build_lstm_model(y_train.shape, params, embedding_matrix)
         history, trained_model = train_model(x_train, y_train, x_valid, y_valid, m, params['batch_size'], params['epochs'])
 
-        save_load.save_model(trained_model, path, '/model_fold{}.h5'.format(i))
-        save_load.save_params(params, path)
+        save_load.save_model(trained_model, path, i)
 
         h = save_load.save_history(path+'/history_fold{}.csv'.format(i), history.history)
         histories.append(h)
 
+    save_load.save_dictionary(path, params, 'params.json')
     save_load.write_final_results(path, histories)
 
 
@@ -101,7 +101,7 @@ def hyperparam_train_eval(params, embedding_path, data_path, output_path):
     """
     embedding_matrix = save_load.load_embedding(embedding_path)
 
-    folds = save_load.load_data(data_path, params['validation_split'])
+    folds = save_load.load_data(data_path, params['validation_splits'])
 
     permutations = [(e, p, h, r, l) for e in params['epochs']
                     for p in params['pad_length']

@@ -5,7 +5,7 @@ Example:
     $ python predict.py -I "../data/data.h5" -P "../results/1_100_16_100/10070824//params.json" -M "../results/1_100_16_100/22050824/model/"
 """
 
-from tensorflow.python.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn import metrics
 import numpy as np
 import argparse
@@ -24,6 +24,7 @@ def eval(trained_models, test, pad_length):
 
     """
     sequences = test.text.to_list()
+    print(sequences)
     # pad training sequences to length of pad_length
     x_test = pad_sequences(sequences, maxlen=pad_length)
     y_test = test.code.to_numpy()
@@ -57,8 +58,9 @@ if __name__ == "__main__":
                                                ' training the models', required=True)
     args = parser.parse_args()
 
-    models = save_load.load_models(args.model)
+
     params = save_load.load_params(args.params)
+    models = save_load.load_models(args.model, params['validation_splits'])
     test_data = save_load.load_test_data(args.input)
 
     eval(models, test_data, params['pad_length'])

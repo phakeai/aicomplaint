@@ -13,16 +13,16 @@ Example:
     the fasttext .vec file (https://dl.fbaipublicfiles.com/fasttext/vectors-english/wiki-news-300d-1M.vec.zip).
 """
 
-from tensorflow.python.keras.preprocessing.sequence import pad_sequences
-from tensorflow.python.keras.utils import to_categorical
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.utils import to_categorical
+import argparse
+import save_load
 import pandas as pd
 import numpy as np
 import collections
 import h5py
 import random
-import math
-import argparse
-import save_load
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 
 def generate_filters():
@@ -92,6 +92,25 @@ def apply_filter_column(filt, text_column):
     return text_column
 
 
+def filter_html_tags(df):
+    """Applies filters to the column named 'text' in a pandas DataFrame.
+
+    Args:
+        df: pandas DataFrame containing the complaint texts in a column named 'text'
+
+    Returns:
+        Returns the modified pandas DataFrame.
+    """
+    # Generate filters
+    repl, rm = generate_filters()
+    # Apply filters
+    df.text = apply_filter_column(repl, df.text)
+    df.text = apply_filter_column(rm, df.text)
+    # transform to lower case characters
+    df.text = df.text.str.lower()
+    return df
+
+
 def build_dict(filename, words):
     """Builds a dictionary mapping words to id and reduces the provides embedding matrix to the words contained in
     the provided dataset.
@@ -135,71 +154,28 @@ def build_dict(filename, words):
     return word_to_id, embedding_matrix
 
 
-def k_fold(code_samples, validation_split):
-    """Generates k folds containing training and validation data based on the provided dataframe.
-
-    Args:
-        code_samples: pandas dataframe containing the combined data used for training and validation.
-        validation_split: fraction used for validation.
-
-    Returns:
-        splits: a list of k tuples containing the training and validation split of a fold
-    """
-    fold_number = math.floor(1 / validation_split)
-
-    splits = [None]*fold_number
-
-    for i in range(fold_number):
-
-        for name, code in code_samples.groupby('code'):
-            lower_bound_v = math.floor(validation_split*i*len(code))
-            upper_bound_v = math.floor(validation_split*(i+1)*len(code))
-            valid = code.iloc[lower_bound_v:upper_bound_v].reset_index(drop=True)
-            train = pd.concat([code.iloc[:lower_bound_v], code.iloc[upper_bound_v:]], ignore_index=True)
-
-            s = splits[i]
-
-            if s is not None:
-                splits[i] = (pd.concat([s[0], train], ignore_index=True), pd.concat([s[1], valid], ignore_index=True))
-            else:
-                splits[i] = (train, valid)
-
-    return splits
-
-
-def sample(df, sample_number, test_split):
+def down_sample(df, samples_per_class):
     """Uniformly samples training, validation and test data from the classes provided in the dataframe.
 
     Args:
-        df: pandas dataframe containing the entire dataset
-        sample_number: number of samples that are drawn from each class
-        test_split: fraction of test samples
+        df: pandas DataFrame
 
     Returns:
-        (tuple): a tuple containing:
-
-            test_set: pandas dataframe containing the data used for testing.
-            train_valid_set: pandas dataframe containing the combined data used for training and validation.
+        DataFrame: a pandas DataFrame containing the random samples
     """
     classes = df.groupby(['code'])
-    test_set = []
-    train_valid = []
+    data = []
 
     for name, code_class in classes:
         items_per_class = len(code_class)
-        random_uniform = random.sample(list(range(items_per_class)), min(sample_number, items_per_class))
-        smp = code_class.iloc[random_uniform].reset_index(drop=True)
-        test_split_index = math.floor(len(smp) * (test_split))
-        test = smp.iloc[:test_split_index].reset_index(drop=True)
-        test_set.append(test)
-        train_v = smp.iloc[test_split_index:].reset_index(drop=True)
-        train_valid.append(train_v)
-    test_set = pd.concat(test_set, ignore_index=True)
-    train_valid_set = pd.concat(train_valid, ignore_index=True)
-    return test_set, train_valid_set
+        random_uniform = random.sample(list(range(items_per_class)), min(samples_per_class, items_per_class))
+        sam = code_class.iloc[random_uniform].reset_index(drop=True)
+        data.append(sam)
+
+    return pd.concat(data, ignore_index=True)
 
 
-def prepare_data(data_path, embedding_path, test_split, validation_split, output_folder,
+def prepare_data(train_data_path, embedding_path, test_split, validation_splits, output_folder,
                  class_threshold, samples_per_class):
     """Prepares data for training, validation and evaluation. Creates a reduced embedding matrix based on the words
     contained in the provided dataset.
@@ -218,15 +194,8 @@ def prepare_data(data_path, embedding_path, test_split, validation_split, output
 
     """
     # Load file
-    df = pd.read_csv(data_path, sep='\t')
-    # Generate filters
-    repl, rm = generate_filters()
-    # Apply filters
-    df.text = apply_filter_column(repl, df.text)
-    df.text = apply_filter_column(rm, df.text)
-
-    # transform to lower case characters
-    df.text = df.text.str.lower()
+    df = pd.read_csv(train_data_path, sep='\t')
+    df = filter_html_tags(df)
 
     # split whitespaces
     df.text = df.text.str.split()
@@ -235,7 +204,19 @@ def prepare_data(data_path, embedding_path, test_split, validation_split, output
     code_frequency = df.code.value_counts().to_dict()
 
     # set code to 0 if it the frequency is below the threshold
-    df.code = df.code.apply(lambda x: x if code_frequency[x] >= class_threshold else 0)
+    df.code = df.code.apply(lambda x: x if code_frequency[x] > class_threshold else 0)
+
+    # compute the frequency of each error code to determine new class identifier of type integer
+    code_frequency = df.code.value_counts().to_dict()
+
+    # maps old codes to new codes
+    new_codes = dict()
+    for i, key in enumerate(code_frequency.keys()):
+        new_codes[key] = i
+    df.code = df.code.map(new_codes)
+
+    # save the code mapping in a json file
+    save_load.save_dictionary(output_folder, new_codes, 'codes_dict.json')
 
     # generate set of words that are contained in the dataset
     word_list = [word for sublist in df.text.to_list() for word in sublist]
@@ -244,25 +225,37 @@ def prepare_data(data_path, embedding_path, test_split, validation_split, output
     # load the embedding matrix and reduce it to the words contained in the dataset
     word_to_id, embedding_matrix = build_dict(embedding_path, words)
 
-    save_load.save_dictionary(output_folder+'/', word_to_id)
+    # save the word-to-id dictionary
+    save_load.save_dictionary(f'{output_folder}/', word_to_id, 'dictionary.json')
 
-    df.to_hdf(output_folder+'/data.h5', key='full', mode='w')
+    if samples_per_class is not None:
+        df = down_sample(df, samples_per_class)
 
-    test, train_valid = sample(df, samples_per_class, test_split)
+    # convert words into integer values according to the word_to_id dictionary
+    df.text = df.text.apply(lambda wl: [int(word_to_id[word]) for word in wl])
 
-    train_valid.text = train_valid.text.apply(lambda wl: [int(word_to_id[word]) for word in wl])
+    # divide the dataset in to training and test preserving the original code distribution
+    train, test = train_test_split(df, test_size=test_split, shuffle=True, stratify=df.code)
+    train = train.reset_index(drop=True)
+    test = test.reset_index(drop=True)
 
-    folds = k_fold(train_valid, validation_split)
+    # save the test data
+    test.to_hdf(f'{output_folder}/data.h5', key='test')
 
-    test.text = test.text.apply(lambda wl: [int(word_to_id[word]) for word in wl])
-    test.to_hdf(output_folder+'/data.h5', key='test')
+    # generate 10 stratified folds for model training
+    skf = StratifiedKFold(n_splits=validation_splits, shuffle=True)
 
-    for i, fold in enumerate(folds):
+    for i, (train_index, val_index) in enumerate(skf.split(train.text, train.code)):
 
-        fold[0].to_hdf(output_folder+'/data.h5', key='train_{}'.format(i))
-        fold[1].to_hdf(output_folder+'/data.h5', key='valid_{}'.format(i))
+        train_i = train.loc[train_index]
+        val_i = train.loc[val_index]
 
-    with h5py.File(output_folder+'/embedding.h5', 'w') as f:
+        # save fold training and validation data of fold i
+        train_i.to_hdf(f'{output_folder}/data.h5', key=f'train_{i}')
+        val_i.to_hdf(f'{output_folder}/data.h5', key=f'valid_{i}')
+
+    # save the reduced embedding matrix
+    with h5py.File(f'{output_folder}/embedding.h5', 'w') as f:
         f.create_dataset('embedding', data=embedding_matrix)
 
 
@@ -278,7 +271,8 @@ if __name__ == '__main__':
     parser.add_argument('-T', '--threshold', help='the threshold specifies the number of samples an error code exhibits'
                                                   ' to be considered a separate class during training', type=int,
                         default=500)
-    parser.add_argument('-S', '--samples', help='number of samples that are drawn from a class', type=int, default=522)
+    parser.add_argument('-S', '--samples', help='number of samples that are drawn from a class; if None the entire'
+                                                'samples are used', type=int, default=None)
 
     args = parser.parse_args()
 
@@ -292,7 +286,7 @@ if __name__ == '__main__':
     save_load.create_folder(output_path)
     params = save_load.load_params(params_path)
 
-    prepare_data(data_path, embedding_path, params['test_split'], params['validation_split'], output_path,
+    prepare_data(data_path, embedding_path, params['test_split'], params['validation_splits'], output_path,
                  class_threshold, samples_per_class)
 
 

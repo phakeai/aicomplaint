@@ -2,14 +2,13 @@
 
 """
 
-from tensorflow.python.keras.models import model_from_json
+from tensorflow.keras.models import load_model as lm
 import json
 import datetime
 import pandas as pd
 import numpy as np
 import h5py
 import os
-import math
 
 
 def create_folder(path):
@@ -74,18 +73,19 @@ def create_ts_path(params, output_folder):
     return path
 
 
-def save_dictionary(path, word_to_id):
-    """Saves a word to id mapping as a json file.
+def save_dictionary(path, dictionary, filename):
+    """Saves a dictionary as a json file.
 
     Args:
         path: path to the folder that will contain the json file.
-        word_to_id: dictionary containing the mapping of words to ids.
+        dictionary: the dictionary that will be saved.
+        filename: filename
 
     Returns:
 
     """
-    with open(path+'dictionary.json', 'w') as f:
-        json.dump(word_to_id, f)
+    with open(f'{path}/{filename}', 'w') as f:
+        json.dump(dictionary, f)
 
 
 def load_dictionary(path):
@@ -102,44 +102,30 @@ def load_dictionary(path):
     return word_to_id
 
 
-def save_model(model, path, weight_path):
-    """Saves a model.
+def save_model(model, path, fold):
+    """Loads a dictionary mapping words to ids.
 
     Args:
-        model: a model object.
-        path: path to the folder that will contain the saved model.
-        weight_path: file name for the model of a specific training fold.
-
-    Returns:
+        model: model that will be saved.
+        path: path to the folder of the model.
+        fold: fold number
 
     """
-    model_path = create_folder(path+'/model/')
-
-    # path for the model specifications (save path)
-    model_json_file = model_path + '/model.json'
-    # path for the trained model weights (save path)
-    model_weights = model_path + '/'+weight_path
-    # save the model
-    model_json = model.to_json()
-    with open(model_json_file, "w") as json_file:
-        json_file.write(model_json)
-
-    model.save_weights(model_weights)
-    print("model saved")
+    model.save(f'{path}/model_{fold}.h5')
+    print('model saved')
 
 
-def load_data(dataset, validation_split):
+def load_data(dataset, fold_number):
     """
 
     Args:
         dataset: path to the hdf file
-        validation_split: fraction of data that is used for validation
+        fold_number: number of folds
 
     Returns:
         folds: list of evaluation folds
     """
     folds = []
-    fold_number = math.floor(1 / validation_split)
     for i in range(fold_number):
         train = pd.read_hdf(dataset, 'train_{}'.format(i))
         valid = pd.read_hdf(dataset, 'valid_{}'.format(i))
@@ -214,9 +200,9 @@ def save_history(file, history):
         fold_h: a numpy Array containing the history of a single fold.
     """
     loss = history['loss']
-    acc = history['acc']
+    acc = history['accuracy']
     val_loss = history['val_loss']
-    val_acc = history['val_acc']
+    val_acc = history['val_accuracy']
 
     fold_h = np.array([loss, acc, val_loss, val_acc])
     fold_h = fold_h.transpose()
@@ -239,38 +225,30 @@ def load_embedding(embedding_file):
     return embedding_matrix
 
 
-def load_model(json_path, weights_path):
+def load_model(model_path):
     """Loads the model using a json description of the model and a hdf file containing the weights.
 
     Args:
-        json_path: path to the model.json file.
-        weights_path: path to the file containing the weights of an individual training fold.
+        model_path: path to the model.h5 file.
 
     Returns:
         model: model object
     """
-    json_file = open(json_path, 'r')
-    model_json = json_file.read()
-    model = model_from_json(model_json)
-    json_file.close()
-    model.load_weights(weights_path)
-    return model
+    return lm(model_path)
 
 
-def load_models(model_path):
+def load_models(model_path, folds):
     """Loads the all models of a single cross-validation.
 
     Args:
-        model_path: path to the folder containing the models of a cross-validation and the model
-        description provided as model.json file.
+        model_path: path to the folder containing the models of a cross-validation.
 
     Returns:
         models: list of model objects
     """
     models = []
-    weight_paths = get_weight_paths(model_path)
-    for path in weight_paths:
-        model = load_model(model_path+'/model.json', path)
+    for i in range(folds):
+        model = load_model(model_path+'/model_{}.h5'.format(i))
         models.append(model)
 
     return models
