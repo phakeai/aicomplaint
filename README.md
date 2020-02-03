@@ -6,6 +6,7 @@ Program code of the paper "Supporting Complaint Management in the Medical Techno
 * updated code to tensorflow 2.1
 * updated requirements
 * preprocessing.py can now be used to create data for a stratified k-fold cross validation
+* renamed validation_split parameter to validation_splits
 
 ## Requirements
 
